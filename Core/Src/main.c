@@ -101,6 +101,16 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+  /* Read temperature from DS18B20 sensor */
+	  float temperature = DS18B20_GetTemp();
+
+	  /* Send temperature data via UART */
+	  char buffer[50];
+	  int len = snprintf(buffer, sizeof(buffer), "Temperature: %.2f °C\r\n", temperature);
+	  HAL_UART_Transmit(&huart2, (uint8_t*)buffer, len, HAL_MAX_DELAY);
+
+	  /* Add a delay to avoid flooding the UART */
+	  HAL_Delay(1000); // 1-second delay
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -241,6 +251,12 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 /* USER CODE BEGIN MX_GPIO_Init_1 */
+  GPIO_InitStruct.Pin = GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
@@ -270,6 +286,82 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+#define DS18B20_PORT GPIOA
+#define DS18B20_PIN GPIO_PIN_1
+
+void delay_us(uint16_t time) {
+    __HAL_TIM_SET_COUNTER(&htim2, 0);
+    while (__HAL_TIM_GET_COUNTER(&htim2) < time);
+}
+
+void set_pin_output(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin) {
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pin = GPIO_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOx, &GPIO_InitStruct);
+}
+
+void set_pin_input(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin) {
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pin = GPIO_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOx, &GPIO_InitStruct);
+}
+
+uint8_t DS18B20_Start(void) {
+    uint8_t response = 0;
+    set_pin_output(DS18B20_PORT, DS18B20_PIN);
+    HAL_GPIO_WritePin(DS18B20_PORT, DS18B20_PIN, GPIO_PIN_RESET);
+    delay_us(480);
+    set_pin_input(DS18B20_PORT, DS18B20_PIN);
+    delay_us(80);
+    if (!HAL_GPIO_ReadPin(DS18B20_PORT, DS18B20_PIN)) response = 1;
+    delay_us(400);
+    return response;
+}
+
+void DS18B20_Write(uint8_t data) {
+    set_pin_output(DS18B20_PORT, DS18B20_PIN);
+    for (int i = 0; i < 8; i++) {
+        HAL_GPIO_WritePin(DS18B20_PORT, DS18B20_PIN, (data & (1 << i)) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        delay_us(60);
+    }
+}
+
+uint8_t DS18B20_Read(void) {
+    uint8_t value = 0;
+    set_pin_input(DS18B20_PORT, DS18B20_PIN);
+    for (int i = 0; i < 8; i++) {
+        set_pin_output(DS18B20_PORT, DS18B20_PIN);
+        HAL_GPIO_WritePin(DS18B20_PORT, DS18B20_PIN, GPIO_PIN_RESET);
+        delay_us(2);
+        set_pin_input(DS18B20_PORT, DS18B20_PIN);
+        if (HAL_GPIO_ReadPin(DS18B20_PORT, DS18B20_PIN)) value |= (1 << i);
+        delay_us(60);
+    }
+    return value;
+}
+float DS18B20_GetTemp(void) {
+    uint8_t temp_LSB, temp_MSB;
+    int16_t temp;
+
+    DS18B20_Start();
+    DS18B20_Write(0xCC); // Skip ROM
+    DS18B20_Write(0x44); // Convert T command
+    HAL_Delay(750); // Wait for conversion
+
+    DS18B20_Start();
+    DS18B20_Write(0xCC); // Skip ROM
+    DS18B20_Write(0xBE); // Read Scratchpad
+
+    temp_LSB = DS18B20_Read();
+    temp_MSB = DS18B20_Read();
+    temp = (temp_MSB << 8) | temp_LSB;
+    return (float)temp / 16.0;
+}
 
 /* USER CODE END 4 */
 
